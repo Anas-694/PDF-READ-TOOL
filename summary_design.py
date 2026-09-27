@@ -157,6 +157,8 @@ def add_data_table(doc: Document, headers, rows, first_col_left=True):
         cells = table.add_row().cells
         bg = WHITE_HEX if ri % 2 == 0 else LIGHT_BG_HEX
         for ci, val in enumerate(row):
+            if ci >= len(cells):
+                break
             cell = cells[ci]
             set_cell_shading(cell, bg)
             cell.paragraphs[0].text = ""
