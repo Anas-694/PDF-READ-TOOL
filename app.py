@@ -155,26 +155,67 @@ if st.button("Start Analysis"):
                     time.sleep(5)
             
             final_summary = ""
+            company_name = "Financial Analysis Report"
+            report_title = "AI Executive Summary"
+            kpi_cards = []
+            
             if full_extracted_text.strip():
-                status_text.text("Generating Final Executive Summary...")
-                final_prompt = f"""You are an Expert Financial Analyst. Based on the following extracted data from a company's financial report, write a comprehensive, fact-based 'Executive Summary' (Nishor) in Roman Urdu.
-This should read like an analyst's conclusion at the end of a report.
+                status_text.text("Generating Final Executive Summary & KPIs...")
+                final_prompt = f"""You are an Expert Financial Analyst. Based on the following extracted data, write a comprehensive 'Executive Summary' in Roman Urdu.
 
-Must Include:
-1. Overall Performance Analysis (How did the company do this year? Was it good or bad?)
-2. Key Highlights (Best and worst facts extracted)
-3. Future Outlook & Expected Results (What is the company planning and what to expect next?)
+REQUIREMENTS:
+1. Identify the Company Name and a short Report Title (e.g. "Interim Results 2026").
+2. Extract the 3 to 4 most critical financial metrics (Revenue, Profit, etc.) for KPI Cards. Formatted exactly as a JSON array.
+3. Write the Executive Summary in Roman Urdu using short bullet points (- ) for highlights. DO NOT write thick paragraphs. Keep it punchy and professional.
 
-Rules:
-- Write purely in Roman Urdu (except financial terms).
-- Use professional headings (##) and bold text (**text**).
-- Do not invent facts, only use the provided text.
+STRICT OUTPUT FORMAT MUST BE EXACTLY LIKE THIS:
+COMPANY_NAME: [Company Name]
+REPORT_TITLE: [Report Title]
+
+```json
+[
+  {{"title": "Revenue", "value": "Rs. 49,716M", "change": "35.3%", "positive": true}},
+  {{"title": "Net Profit", "value": "Rs. 6,050M", "change": "17.4%", "positive": true}}
+]
+```
+
+## Overall Performance
+(your text here)
+
+## Key Highlights
+(your text here)
+
+## Future Outlook
+(your text here)
 
 EXTRACTED DATA:
 {full_extracted_text}"""
                 final_response = model.generate_content(final_prompt)
                 if final_response.text:
-                    final_summary = final_response.text
+                    resp_text = final_response.text
+                    
+                    # Parse Company Name
+                    cn_match = re.search(r'COMPANY_NAME:\s*(.+)', resp_text)
+                    if cn_match: company_name = cn_match.group(1).strip()
+                        
+                    # Parse Report Title
+                    rt_match = re.search(r'REPORT_TITLE:\s*(.+)', resp_text)
+                    if rt_match: report_title = rt_match.group(1).strip()
+                    
+                    # Parse JSON KPIs
+                    json_match = re.search(r'```json\s*(.*?)\s*```', resp_text, re.DOTALL)
+                    if json_match:
+                        import json
+                        try:
+                            kpi_cards = json.loads(json_match.group(1))
+                        except:
+                            pass
+                    
+                    # Clean Markdown text
+                    clean_md = re.sub(r'COMPANY_NAME:.*?\n', '', resp_text)
+                    clean_md = re.sub(r'REPORT_TITLE:.*?\n', '', clean_md)
+                    clean_md = re.sub(r'```json.*?```', '', clean_md, flags=re.DOTALL)
+                    final_summary = clean_md.strip()
 
             status_text.text("Analysis Complete! Generating File...")
             
@@ -182,18 +223,27 @@ EXTRACTED DATA:
             sd.add_footer_page_number(doc.sections[0])
             
             # --- PROFESSIONAL COVER PAGE ---
-            doc.add_heading("Financial Analysis Report", 0)
-            doc.add_paragraph(f"Generated on: {datetime.now().strftime('%d %B %Y, %H:%M')}")
-            doc.add_paragraph(f"Source File: {uploaded_file.name}")
-            doc.add_page_break()
+            doc.add_heading(company_name.upper(), 0)
+            p_sub = doc.add_paragraph(report_title)
+            p_sub.runs[0].font.size = Pt(14)
+            p_sub.runs[0].font.color.rgb = sd.NAVY
+            p_sub.runs[0].bold = True
             
-            # Add AI Summary at the TOP
+            doc.add_paragraph(f"Generated on: {datetime.now().strftime('%d %B %Y')}  ·  Source: {uploaded_file.name}")
+            
+            # Add KPI Cards right below header if available
+            if kpi_cards:
+                doc.add_paragraph() # spacer
+                sd.add_kpi_row(doc, kpi_cards)
+                doc.add_paragraph() # spacer
+            
+            # Add AI Summary Markdown
             if final_summary:
-                sd.add_section_heading(doc, "Executive Final Summary (AI Analysis)")
                 add_markdown_to_doc(doc, final_summary)
                 doc.add_page_break()
             
-            # Add Page Summaries
+            # --- APPENDIX: RAW EXTRACTS ---
+            sd.add_section_heading(doc, "Appendix: Detailed Page Extracts")
             for line in full_extracted_text.split('\n'):
                 if line.startswith('--- Page ') and line.endswith(' ---'):
                     match = re.search(r'Page (\d+)', line)
