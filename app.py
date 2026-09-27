@@ -83,14 +83,16 @@ def add_markdown_to_doc(doc, text):
                 in_table = False
                 
             if line.startswith('# '):
-                doc.add_heading(line[2:].strip(), level=1)
+                doc.add_heading(line[2:].replace('**', '').strip(), level=1)
             elif line.startswith('## '):
-                doc.add_heading(line[3:].strip(), level=2)
+                doc.add_heading(line[3:].replace('**', '').strip(), level=2)
             elif line.startswith('### '):
-                doc.add_heading(line[4:].strip(), level=3)
+                doc.add_heading(line[4:].replace('**', '').strip(), level=3)
             elif line.startswith('- ') or line.startswith('* '):
                 clean_line = line[2:].strip()
                 add_formatted_paragraph(doc, clean_line, style='List Bullet')
+            elif line == '---' or line == '***':
+                continue # Skip raw markdown dividers
             else:
                 add_formatted_paragraph(doc, line)
                 
