@@ -164,15 +164,6 @@ if st.button("Start Analysis"):
             pdf_bytes = uploaded_file.read()
             pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
             
-            doc = Document()
-            
-            # --- PROFESSIONAL COVER PAGE ---
-            doc.add_heading("Financial Analysis Report", 0)
-            doc.add_paragraph(f"Generated on: {datetime.now().strftime('%d %B %Y, %H:%M')}")
-            doc.add_paragraph(f"Source File: {uploaded_file.name}")
-            doc.add_page_break()
-            # -------------------------------
-            
             total_pages = len(pdf_document)
             end_page_to_process = min(end_page, total_pages)
             
@@ -192,14 +183,6 @@ if st.button("Start Analysis"):
                 if text.strip():
                     summary = analyze_page(model, text, page_num + 1)
                     if summary and summary.strip():
-                        # Professional Subtle Page Divider
-                        p = doc.add_paragraph(f"Source: Page {page_num + 1}")
-                        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                        p.runs[0].font.size = Pt(9)
-                        p.runs[0].font.color.rgb = RGBColor(128, 128, 128)
-                        
-                        add_markdown_to_doc(doc, summary)
-                        doc.add_paragraph('\n')
                         full_extracted_text += f"\n--- Page {page_num + 1} ---\n{summary}\n"
                 
                 pages_done += 1
@@ -208,6 +191,7 @@ if st.button("Start Analysis"):
                 if page_num < end_page_to_process - 1:
                     time.sleep(5)
             
+            final_summary = ""
             if full_extracted_text.strip():
                 status_text.text("Generating Final Executive Summary...")
                 final_prompt = f"""You are an Expert Financial Analyst. Based on the following extracted data from a company's financial report, write a comprehensive, fact-based 'Executive Summary' (Nishor) in Roman Urdu.
@@ -227,11 +211,37 @@ EXTRACTED DATA:
 {full_extracted_text}"""
                 final_response = model.generate_content(final_prompt)
                 if final_response.text:
-                    doc.add_page_break()
-                    doc.add_heading("Executive Final Summary (AI Analysis)", level=1)
-                    add_markdown_to_doc(doc, final_response.text)
+                    final_summary = final_response.text
 
             status_text.text("Analysis Complete! Generating File...")
+            
+            # --- PROFESSIONAL COVER PAGE ---
+            doc = Document()
+            doc.add_heading("Financial Analysis Report", 0)
+            doc.add_paragraph(f"Generated on: {datetime.now().strftime('%d %B %Y, %H:%M')}")
+            doc.add_paragraph(f"Source File: {uploaded_file.name}")
+            doc.add_page_break()
+            
+            # Add AI Summary at the TOP
+            if final_summary:
+                doc.add_heading("Executive Final Summary (AI Analysis)", level=1)
+                add_markdown_to_doc(doc, final_summary)
+                doc.add_page_break()
+            
+            # Add Page Summaries
+            # We replace "--- Page X ---" with the subtle grey divider
+            for line in full_extracted_text.split('\n'):
+                if line.startswith('--- Page ') and line.endswith(' ---'):
+                    match = re.search(r'Page (\d+)', line)
+                    if match:
+                        p = doc.add_paragraph(f"Source: Page {match.group(1)}")
+                        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                        p.runs[0].font.size = Pt(9)
+                        p.runs[0].font.color.rgb = RGBColor(128, 128, 128)
+                else:
+                    # We pass each individual line to add_markdown_to_doc
+                    if line.strip():
+                        add_markdown_to_doc(doc, line)
             
             doc_io = io.BytesIO()
             doc.save(doc_io)
