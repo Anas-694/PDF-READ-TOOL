@@ -55,28 +55,30 @@ def add_markdown_to_doc(doc, text):
         else:
             if in_table:
                 if table_data:
-                    # Attempt to use a built-in nice style, fallback to Table Grid if not found
                     table = doc.add_table(rows=len(table_data), cols=len(table_data[0]))
-                    try:
-                        table.style = 'Light Shading Accent 1'
-                    except:
-                        table.style = 'Table Grid'
+                    table.style = 'Table Grid'
                         
                     for i, row_data in enumerate(table_data):
                         row_cells = table.rows[i].cells
                         for j, cell_text in enumerate(row_data):
                             if j < len(row_cells):
-                                cell_text_clean = cell_text.replace('**', '') # Tables don't need bold markers inside
+                                cell_text_clean = cell_text.replace('**', '')
                                 run = row_cells[j].paragraphs[0].add_run(cell_text_clean)
                                 
-                                # Color coding logic for financial data
+                                # Make header row bold
+                                if i == 0:
+                                    run.bold = True
+                                
+                                # Smarter color coding (only for actual numbers)
                                 if '%' in cell_text_clean or 'YoY' in cell_text_clean or 'Growth' in cell_text_clean:
-                                    if '-' in cell_text_clean or '(' in cell_text_clean or 'Decline' in cell_text_clean:
-                                        run.font.color.rgb = RGBColor(204, 0, 0) # Red
-                                        run.bold = True
-                                    elif '+' in cell_text_clean or 'Growth' in cell_text_clean or 'Increase' in cell_text_clean:
-                                        run.font.color.rgb = RGBColor(0, 153, 51) # Green
-                                        run.bold = True
+                                    # Ensure it actually has numbers
+                                    if re.search(r'\d', cell_text_clean):
+                                        if '-' in cell_text_clean or re.search(r'\(\s*\d', cell_text_clean) or 'Decline' in cell_text_clean:
+                                            run.font.color.rgb = RGBColor(204, 0, 0)
+                                            run.bold = True
+                                        elif '+' in cell_text_clean or 'Growth' in cell_text_clean or 'Increase' in cell_text_clean:
+                                            run.font.color.rgb = RGBColor(0, 153, 51)
+                                            run.bold = True
                 table_data = []
                 in_table = False
                 
@@ -87,7 +89,6 @@ def add_markdown_to_doc(doc, text):
             elif line.startswith('### '):
                 doc.add_heading(line[4:].strip(), level=3)
             elif line.startswith('- ') or line.startswith('* '):
-                # Handle bold in list items
                 clean_line = line[2:].strip()
                 add_formatted_paragraph(doc, clean_line, style='List Bullet')
             else:
@@ -95,10 +96,7 @@ def add_markdown_to_doc(doc, text):
                 
     if in_table and table_data:
         table = doc.add_table(rows=len(table_data), cols=len(table_data[0]))
-        try:
-            table.style = 'Light Shading Accent 1'
-        except:
-            table.style = 'Table Grid'
+        table.style = 'Table Grid'
             
         for i, row_data in enumerate(table_data):
             row_cells = table.rows[i].cells
@@ -107,13 +105,17 @@ def add_markdown_to_doc(doc, text):
                     cell_text_clean = cell_text.replace('**', '')
                     run = row_cells[j].paragraphs[0].add_run(cell_text_clean)
                     
+                    if i == 0:
+                        run.bold = True
+                        
                     if '%' in cell_text_clean or 'YoY' in cell_text_clean or 'Growth' in cell_text_clean:
-                        if '-' in cell_text_clean or '(' in cell_text_clean or 'Decline' in cell_text_clean:
-                            run.font.color.rgb = RGBColor(204, 0, 0)
-                            run.bold = True
-                        elif '+' in cell_text_clean or 'Growth' in cell_text_clean or 'Increase' in cell_text_clean:
-                            run.font.color.rgb = RGBColor(0, 153, 51)
-                            run.bold = True
+                        if re.search(r'\d', cell_text_clean):
+                            if '-' in cell_text_clean or re.search(r'\(\s*\d', cell_text_clean) or 'Decline' in cell_text_clean:
+                                run.font.color.rgb = RGBColor(204, 0, 0)
+                                run.bold = True
+                            elif '+' in cell_text_clean or 'Growth' in cell_text_clean or 'Increase' in cell_text_clean:
+                                run.font.color.rgb = RGBColor(0, 153, 51)
+                                run.bold = True
 
 def analyze_page(model, text, page_num):
     prompt = f"""You are an Expert Financial Analyst specializing in the Pakistan Stock Exchange (PSX).
@@ -179,6 +181,7 @@ if st.button("Start Analysis"):
             
             total_pages_to_process = end_page_to_process - (start_page - 1)
             pages_done = 0
+            full_extracted_text = ""
             
             for page_num in range(start_page - 1, end_page_to_process):
                 status_text.text(f"Page {page_num + 1} analyze ho rahi hai... Please wait.")
@@ -197,6 +200,7 @@ if st.button("Start Analysis"):
                         
                         add_markdown_to_doc(doc, summary)
                         doc.add_paragraph('\n')
+                        full_extracted_text += f"\n--- Page {page_num + 1} ---\n{summary}\n"
                 
                 pages_done += 1
                 progress_bar.progress(pages_done / total_pages_to_process)
@@ -204,6 +208,29 @@ if st.button("Start Analysis"):
                 if page_num < end_page_to_process - 1:
                     time.sleep(5)
             
+            if full_extracted_text.strip():
+                status_text.text("Generating Final Executive Summary...")
+                final_prompt = f"""You are an Expert Financial Analyst. Based on the following extracted data from a company's financial report, write a comprehensive, fact-based 'Executive Summary' (Nishor) in Roman Urdu.
+This should read like an analyst's conclusion at the end of a report.
+
+Must Include:
+1. Overall Performance Analysis (How did the company do this year? Was it good or bad?)
+2. Key Highlights (Best and worst facts extracted)
+3. Future Outlook & Expected Results (What is the company planning and what to expect next?)
+
+Rules:
+- Write purely in Roman Urdu (except financial terms).
+- Use professional headings (##) and bold text (**text**).
+- Do not invent facts, only use the provided text.
+
+EXTRACTED DATA:
+{full_extracted_text}"""
+                final_response = model.generate_content(final_prompt)
+                if final_response.text:
+                    doc.add_page_break()
+                    doc.add_heading("Executive Final Summary (AI Analysis)", level=1)
+                    add_markdown_to_doc(doc, final_response.text)
+
             status_text.text("Analysis Complete! Generating File...")
             
             doc_io = io.BytesIO()
