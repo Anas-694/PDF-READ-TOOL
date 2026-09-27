@@ -5,6 +5,7 @@ from docx import Document
 import time
 import os
 import io
+import re
 
 # Setup the page configuration
 st.set_page_config(page_title="PDF Read Tool", page_icon="📄", layout="centered")
@@ -21,41 +22,81 @@ with st.sidebar:
 
 def add_markdown_to_doc(doc, text):
     lines = text.split('\n')
+    in_table = False
+    table_data = []
+    
     for line in lines:
-        if line.startswith('# '):
-            doc.add_heading(line[2:].strip(), level=1)
-        elif line.startswith('## '):
-            doc.add_heading(line[3:].strip(), level=2)
-        elif line.startswith('### '):
-            doc.add_heading(line[4:].strip(), level=3)
-        elif line.startswith('- ') or line.startswith('* '):
-            doc.add_paragraph(line[2:].strip(), style='List Bullet')
-        elif line.strip() != "":
-            clean_line = line.replace('**', '') 
-            doc.add_paragraph(clean_line.strip())
+        line = line.strip()
+        if not line:
+            continue
+            
+        if line.startswith('|') and line.endswith('|'):
+            if re.match(r'^\|[\s\-\|]+\|$', line):
+                continue
+            row = [cell.strip() for cell in line.split('|')[1:-1]]
+            table_data.append(row)
+            in_table = True
+        else:
+            if in_table:
+                if table_data:
+                    table = doc.add_table(rows=len(table_data), cols=len(table_data[0]))
+                    table.style = 'Table Grid'
+                    for i, row_data in enumerate(table_data):
+                        row_cells = table.rows[i].cells
+                        for j, cell_text in enumerate(row_data):
+                            if j < len(row_cells):
+                                row_cells[j].text = cell_text
+                table_data = []
+                in_table = False
+                
+            if line.startswith('# '):
+                doc.add_heading(line[2:].strip(), level=1)
+            elif line.startswith('## '):
+                doc.add_heading(line[3:].strip(), level=2)
+            elif line.startswith('### '):
+                doc.add_heading(line[4:].strip(), level=3)
+            elif line.startswith('- ') or line.startswith('* '):
+                doc.add_paragraph(line[2:].strip(), style='List Bullet')
+            else:
+                clean_line = line.replace('**', '') 
+                doc.add_paragraph(clean_line.strip())
+                
+    if in_table and table_data:
+        table = doc.add_table(rows=len(table_data), cols=len(table_data[0]))
+        table.style = 'Table Grid'
+        for i, row_data in enumerate(table_data):
+            row_cells = table.rows[i].cells
+            for j, cell_text in enumerate(row_data):
+                if j < len(row_cells):
+                    row_cells[j].text = cell_text
 
 def analyze_page(model, text, page_num):
-    prompt = f"""You are an Expert Investor, a First-Principles Business Operator, and a Financial Analyst specializing in the Pakistan Stock Exchange (PSX). You have built, scaled, and exited successful companies, so you know how to look past the marketing fluff and identify the real core of a business.
+    prompt = f"""You are an Expert Financial Analyst specializing in the Pakistan Stock Exchange (PSX).
 
-Your objective is to read the provided text from a company's financial statement / report carefully and extract the absolute most critical information that an investor MUST know.
+Your objective is to read this single page of a financial report and extract ONLY new, critical information. 
+DO NOT output boilerplate company introductions if they are already obvious. DO NOT invent information.
+If the page contains only empty space, signatures, or irrelevant filler text, reply with exactly "EMPTY_PAGE".
 
-WHAT TO EXTRACT:
-1. Company Introduction: What the company does, its core business, sector, and any background context provided.
-2. New Developments: Any new advancements, expansions, projects, partnerships, product launches, or strategic changes mentioned by the company.
-3. Financial Results: Revenue, profit/loss, margins, EPS, growth or decline compared to previous period, and any other key financial figures reported.
-4. Management Commentary: Everything the company wants to communicate to its investors — outlook, future plans, challenges, risks, and management's own remarks or explanations.
-5. Any other material fact an investor should know before making a decision.
+WHAT TO EXTRACT (If present on this page):
+1. New Developments: Any new projects, partnerships, or strategic changes.
+2. Financial Numbers: Extract revenue, profit, margins, EPS, etc. YOU MUST FORMAT THESE NUMBERS AS A MARKDOWN TABLE.
+3. Management Commentary: Real outlook, future plans, risks, or challenges.
 
-STRICT RULES FOR YOUR RESPONSE:
-1. Language: Your entire output MUST be in Roman Urdu. Use simple, easy-to-understand words (asan alfaz) so a common retail investor can easily grasp complex financial concepts. Do NOT write sentences in English. You may only use English for unavoidable financial terms (like 'EBITDA', 'IPO', 'Revenue', 'EPS', etc.), but explain their context in Roman Urdu.
-2. No Fluff & High Precision: Be extremely precise, authentic, and to the point. Do not add filler words or generic advice. Every single sentence must carry maximum weight.
-3. Structure and Formatting: Provide neat and clean formatting. Use H1 for main section, H2 for sub-topics. Use bullet points instead of long paragraphs.
-4. Focus: Extract the core business model, new developments, financial performance, risks, and real truths — everything the company is communicating to its investors.
+STRICT RULES:
+1. Language: Roman Urdu (easy words). Use English for financial terms (Revenue, EPS).
+2. No Repetition: Do not say "Here is the summary". Just give the facts.
+3. Tables: Whenever you see financial figures (e.g. 2024 vs 2025), put them in a Markdown Table format like this:
+| Indicator | 2024 | 2025 |
+|---|---|---|
+| Revenue | 100 | 120 |
+4. Headings: Use ## for topics. Do not use # (H1).
 
-PAGE TEXT (Page {page_num}):
+PAGE TEXT:
 {text}"""
     try:
         response = model.generate_content(prompt)
+        if "EMPTY_PAGE" in response.text:
+            return ""
         return response.text
     except Exception as e:
         return f"Error on page {page_num}: {str(e)}"
@@ -94,8 +135,8 @@ if st.button("Start Analysis"):
                 
                 if text.strip():
                     summary = analyze_page(model, text, page_num + 1)
-                    if summary:
-                        doc.add_heading(f'Page {page_num + 1} Summary', level=1)
+                    if summary and summary.strip():
+                        doc.add_paragraph(f"--- Page {page_num + 1} ---")
                         add_markdown_to_doc(doc, summary)
                         doc.add_paragraph('\n')
                 
