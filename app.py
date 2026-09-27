@@ -9,6 +9,7 @@ import os
 import io
 import re
 from datetime import datetime
+import summary_design as sd
 
 # Setup the page configuration
 st.set_page_config(page_title="PDF Read Tool", page_icon="📄", layout="centered")
@@ -25,7 +26,6 @@ with st.sidebar:
 
 def add_formatted_paragraph(doc, line, style=None):
     p = doc.add_paragraph(style=style)
-    # Split by bold tags
     chunks = re.split(r'(\*\*.*?\*\*)', line)
     for chunk in chunks:
         if chunk.startswith('**') and chunk.endswith('**'):
@@ -38,56 +38,37 @@ def add_formatted_paragraph(doc, line, style=None):
 def add_markdown_to_doc(doc, text):
     lines = text.split('\n')
     in_table = False
-    table_data = []
+    table_headers = []
+    table_rows = []
     
     for line in lines:
         line = line.strip()
         if not line:
             continue
             
-        # Detect table row
         if line.startswith('|') and line.endswith('|'):
             if re.match(r'^\|[\s\-\|]+\|$', line):
                 continue
-            row = [cell.strip() for cell in line.split('|')[1:-1]]
-            table_data.append(row)
-            in_table = True
+            row = [cell.strip().replace('**', '') for cell in line.split('|')[1:-1]]
+            
+            if not in_table:
+                table_headers = row
+                in_table = True
+            else:
+                table_rows.append(row)
         else:
             if in_table:
-                if table_data:
-                    table = doc.add_table(rows=len(table_data), cols=len(table_data[0]))
-                    table.style = 'Table Grid'
-                        
-                    for i, row_data in enumerate(table_data):
-                        row_cells = table.rows[i].cells
-                        for j, cell_text in enumerate(row_data):
-                            if j < len(row_cells):
-                                cell_text_clean = cell_text.replace('**', '')
-                                run = row_cells[j].paragraphs[0].add_run(cell_text_clean)
-                                
-                                # Make header row bold
-                                if i == 0:
-                                    run.bold = True
-                                
-                                # Smarter color coding (only for actual numbers)
-                                if '%' in cell_text_clean or 'YoY' in cell_text_clean or 'Growth' in cell_text_clean:
-                                    # Ensure it actually has numbers
-                                    if re.search(r'\d', cell_text_clean):
-                                        if '-' in cell_text_clean or re.search(r'\(\s*\d', cell_text_clean) or 'Decline' in cell_text_clean:
-                                            run.font.color.rgb = RGBColor(204, 0, 0)
-                                            run.bold = True
-                                        elif '+' in cell_text_clean or 'Growth' in cell_text_clean or 'Increase' in cell_text_clean:
-                                            run.font.color.rgb = RGBColor(0, 153, 51)
-                                            run.bold = True
-                table_data = []
+                sd.add_data_table(doc, table_headers, table_rows)
                 in_table = False
+                table_headers = []
+                table_rows = []
                 
             if line.startswith('# '):
-                doc.add_heading(line[2:].replace('**', '').strip(), level=1)
+                sd.add_section_heading(doc, line[2:].replace('**', '').strip())
             elif line.startswith('## '):
-                doc.add_heading(line[3:].replace('**', '').strip(), level=2)
+                sd.add_section_heading(doc, line[3:].replace('**', '').strip())
             elif line.startswith('### '):
-                doc.add_heading(line[4:].replace('**', '').strip(), level=3)
+                sd.add_section_heading(doc, line[4:].replace('**', '').strip())
             elif line.startswith('- ') or line.startswith('* '):
                 clean_line = line[2:].strip()
                 add_formatted_paragraph(doc, clean_line, style='List Bullet')
@@ -96,28 +77,8 @@ def add_markdown_to_doc(doc, text):
             else:
                 add_formatted_paragraph(doc, line)
                 
-    if in_table and table_data:
-        table = doc.add_table(rows=len(table_data), cols=len(table_data[0]))
-        table.style = 'Table Grid'
-            
-        for i, row_data in enumerate(table_data):
-            row_cells = table.rows[i].cells
-            for j, cell_text in enumerate(row_data):
-                if j < len(row_cells):
-                    cell_text_clean = cell_text.replace('**', '')
-                    run = row_cells[j].paragraphs[0].add_run(cell_text_clean)
-                    
-                    if i == 0:
-                        run.bold = True
-                        
-                    if '%' in cell_text_clean or 'YoY' in cell_text_clean or 'Growth' in cell_text_clean:
-                        if re.search(r'\d', cell_text_clean):
-                            if '-' in cell_text_clean or re.search(r'\(\s*\d', cell_text_clean) or 'Decline' in cell_text_clean:
-                                run.font.color.rgb = RGBColor(204, 0, 0)
-                                run.bold = True
-                            elif '+' in cell_text_clean or 'Growth' in cell_text_clean or 'Increase' in cell_text_clean:
-                                run.font.color.rgb = RGBColor(0, 153, 51)
-                                run.bold = True
+    if in_table:
+        sd.add_data_table(doc, table_headers, table_rows)
 
 def analyze_page(model, text, page_num):
     prompt = f"""You are an Expert Financial Analyst specializing in the Pakistan Stock Exchange (PSX).
@@ -217,8 +178,10 @@ EXTRACTED DATA:
 
             status_text.text("Analysis Complete! Generating File...")
             
-            # --- PROFESSIONAL COVER PAGE ---
             doc = Document()
+            sd.add_footer_page_number(doc.sections[0])
+            
+            # --- PROFESSIONAL COVER PAGE ---
             doc.add_heading("Financial Analysis Report", 0)
             doc.add_paragraph(f"Generated on: {datetime.now().strftime('%d %B %Y, %H:%M')}")
             doc.add_paragraph(f"Source File: {uploaded_file.name}")
@@ -226,12 +189,11 @@ EXTRACTED DATA:
             
             # Add AI Summary at the TOP
             if final_summary:
-                doc.add_heading("Executive Final Summary (AI Analysis)", level=1)
+                sd.add_section_heading(doc, "Executive Final Summary (AI Analysis)")
                 add_markdown_to_doc(doc, final_summary)
                 doc.add_page_break()
             
             # Add Page Summaries
-            # We replace "--- Page X ---" with the subtle grey divider
             for line in full_extracted_text.split('\n'):
                 if line.startswith('--- Page ') and line.endswith(' ---'):
                     match = re.search(r'Page (\d+)', line)
@@ -241,7 +203,6 @@ EXTRACTED DATA:
                         p.runs[0].font.size = Pt(9)
                         p.runs[0].font.color.rgb = RGBColor(128, 128, 128)
                 else:
-                    # We pass each individual line to add_markdown_to_doc
                     if line.strip():
                         add_markdown_to_doc(doc, line)
             
